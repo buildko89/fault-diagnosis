@@ -5,7 +5,7 @@ import numpy as np
 from .schema import load_circuit_yaml
 from .circuit import AnalogCircuit
 from .testability import check_k_node_testability
-from .simulate import calculate_delta_v
+from .simulate import calculate_measurements
 from .diagnose import diagnose_node_faults
 from .evaluate import run_evaluation
 
@@ -37,24 +37,42 @@ def parse_faults(fault_str):
         sys.exit(1)
     return faults
 
+def parse_freqs(freq_str):
+    """Parse a comma-separated list of frequencies [Hz]. Returns None if empty."""
+    if not freq_str:
+        return None
+    try:
+        return [float(f) for f in freq_str.split(',')]
+    except ValueError as ve:
+        print(f"Error parsing frequencies: {ve}", file=sys.stderr)
+        sys.exit(1)
+
+def resolve_frequencies(config, freq_arg):
+    """CLI --freq overrides; otherwise fall back to the circuit's configured frequencies."""
+    return parse_freqs(freq_arg) or (config.frequencies or None)
+
 def cmd_diagnose(args):
     try:
         config = load_circuit_yaml(args.config)
         circuit = AnalogCircuit(config)
         faults = parse_faults(args.fault)
-        
+        frequencies = resolve_frequencies(config, args.freq)
+
         acc_indices = circuit.get_accessible_indices()
         excitations = []
         for idx in acc_indices:
             J = np.zeros(circuit.num_free_nodes)
             J[idx] = 1.0
             excitations.append(J)
-            
-        delta_v_ms, Z_mn = calculate_delta_v(circuit, excitations, faulty_elements=faults)
-        
-        result = diagnose_node_faults(circuit, Z_mn, delta_v_ms, args.k,
+
+        blocks = calculate_measurements(circuit, excitations, faulty_elements=faults,
+                                        frequencies=frequencies)
+
+        result = diagnose_node_faults(circuit, blocks, None, args.k,
                                       top_n=args.top_n, method=args.method)
-        
+
+        if frequencies:
+            print(f"Frequencies (Hz): {frequencies}")
         print(f"Status: {result['status']}")
         print("\nBest Candidate:")
         best = result['best']
@@ -76,10 +94,12 @@ def cmd_evaluate(args):
         config = load_circuit_yaml(args.config)
         circuit = AnalogCircuit(config)
         faults = parse_faults(args.fault)
-        
+        frequencies = resolve_frequencies(config, args.freq)
+
         result = run_evaluation(
-            circuit, faults, args.k, 
-            trials=args.trials, tol_percent=args.tol, noise_std=args.noise, seed=args.seed
+            circuit, faults, args.k,
+            trials=args.trials, tol_percent=args.tol, noise_std=args.noise, seed=args.seed,
+            frequencies=frequencies
         )
         
         print(json.dumps(result, indent=2))
@@ -102,7 +122,9 @@ def main():
     p_diag.add_argument("--top-n", type=int, default=5)
     p_diag.add_argument("--method", choices=["auto", "exhaustive", "omp"], default="auto",
                         help="Diagnosis strategy (default: auto - exact when small, OMP when large)")
-    
+    p_diag.add_argument("--freq", help="Comma-separated measurement frequencies in Hz "
+                                       "(e.g. 1000,5000). Defaults to the circuit's frequencies.")
+
     p_eval = subparsers.add_parser("evaluate")
     p_eval.add_argument("config", help="YAML config file")
     p_eval.add_argument("--fault", help="Fault string (e.g. R3=0.1)")
@@ -111,6 +133,8 @@ def main():
     p_eval.add_argument("--tol", type=float, default=0.0)
     p_eval.add_argument("--noise", type=float, default=0.0)
     p_eval.add_argument("--seed", type=int, default=42)
+    p_eval.add_argument("--freq", help="Comma-separated measurement frequencies in Hz "
+                                       "(e.g. 1000,5000). Defaults to the circuit's frequencies.")
     
     args = parser.parse_args()
     if args.command == "testability":

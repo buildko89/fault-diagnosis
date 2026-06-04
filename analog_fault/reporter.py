@@ -54,18 +54,35 @@ def generate_markdown_report(
     plt.close()
     
     # 2. Generate delta_v.png
-    plt.figure(figsize=(6, 4))
     # delta_v_m is ordered/sized by get_accessible_indices() which excludes the
     # reference node; derive the x labels from the same source so the bar count
     # always matches the data (config.accessible may include the reference node).
     nodes = [n for n in circuit.config.accessible if n != circuit.reference_node]
-    plt.bar([str(n) for n in nodes], delta_v_m, color='orange')
-    plt.title("Voltage Deviation at Accessible Nodes (Delta Vm)")
-    plt.xlabel("Node")
-    plt.ylabel("Voltage Deviation [V]")
-    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    labels = [str(n) for n in nodes]
+    dv = np.asarray(delta_v_m)
     delta_v_path = os.path.join(output_dir, 'delta_v.png')
-    plt.tight_layout()
+
+    if np.iscomplexobj(dv):
+        # AC: show magnitude and phase of the complex voltage deviation.
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 6), constrained_layout=True)
+        ax1.bar(labels, np.abs(dv), color='orange')
+        ax1.set_title("Voltage Deviation Magnitude |Delta Vm|")
+        ax1.set_ylabel("|Delta V| [V]")
+        ax1.grid(axis='y', linestyle='--', alpha=0.7)
+        ax2.bar(labels, np.angle(dv, deg=True), color='seagreen')
+        ax2.set_title("Voltage Deviation Phase (Delta Vm)")
+        ax2.set_xlabel("Node")
+        ax2.set_ylabel("Phase [deg]")
+        ax2.grid(axis='y', linestyle='--', alpha=0.7)
+    else:
+        plt.figure(figsize=(6, 4))
+        plt.bar(labels, dv, color='orange')
+        plt.title("Voltage Deviation at Accessible Nodes (Delta Vm)")
+        plt.xlabel("Node")
+        plt.ylabel("Voltage Deviation [V]")
+        plt.grid(axis='y', linestyle='--', alpha=0.7)
+        plt.tight_layout()
+
     plt.savefig(delta_v_path)
     plt.close()
     

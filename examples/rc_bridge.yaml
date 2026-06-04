@@ -1,0 +1,12 @@
+name: rc_bridge
+reference: 0
+nodes: [0, 1, 2, 3, 4]
+accessible: [1, 2, 3]
+frequencies: [1000.0, 5000.0]
+elements:
+  - {name: R1, type: R, n1: 1, n2: 0, value: 1.0}
+  - {name: R2, type: R, n1: 2, n2: 0, value: 1.0}
+  - {name: R3, type: R, n1: 3, n2: 0, value: 1.0}
+  - {name: C4, type: C, n1: 1, n2: 4, value: 1.0e-3}
+  - {name: R5, type: R, n1: 2, n2: 4, value: 1.0}
+  - {name: R6, type: R, n1: 3, n2: 4, value: 1.0}

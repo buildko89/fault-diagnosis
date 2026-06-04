@@ -9,6 +9,8 @@ from analog_fault.schema import CircuitConfig, Element
 from analog_fault.circuit import AnalogCircuit, element_admittance
 from analog_fault.simulate import calculate_measurements, calculate_delta_v
 from analog_fault.diagnose import diagnose_node_faults, reconstruct_branch_faults
+from analog_fault.evaluate import run_evaluation
+from analog_fault.reporter import generate_markdown_report
 
 
 # --------------------------------------------------------------------------
@@ -266,3 +268,32 @@ def test_ac_reconstruction_classifies_resistor_fault():
     # A resistor's deviation is frequency-independent (imaginary part ~0).
     for dy in r5["delta_y_by_freq"].values():
         assert dy.imag == pytest.approx(0.0, abs=1e-6)
+
+
+# --------------------------------------------------------------------------
+# evaluate / reporter: AC 経路の統合 (Phase 6)
+# --------------------------------------------------------------------------
+def test_run_evaluation_ac_recovers_capacitor_fault():
+    circuit = _ac_bridge_with_cap()
+    result = run_evaluation(circuit, {"C4": 0.5e-3}, max_faults=2, trials=3,
+                            frequencies=[1000.0, 5000.0])
+    assert sorted(result["correct_nodes"]) == [1, 4]
+    assert result["top1_accuracy"] == 1.0
+    assert result["frequencies"] == [1000.0, 5000.0]
+
+
+def test_reporter_handles_complex_delta_v(tmp_path):
+    circuit = _ac_bridge_with_cap()
+    exc = _unit_excitations(circuit)
+    blocks = calculate_measurements(
+        circuit, exc, faulty_elements={"C4": 0.5e-3}, frequencies=[1000.0, 5000.0]
+    )
+    result = diagnose_node_faults(circuit, blocks, None, max_faults=2)
+    res_dict = {"result": result, "time": 0.0}
+
+    # complex ΔV from the first frequency block -> magnitude/phase plot
+    generate_markdown_report(circuit, blocks[0].delta_v_ms[0], res_dict, res_dict,
+                             output_dir=str(tmp_path))
+    assert (tmp_path / "delta_v.png").exists()
+    assert (tmp_path / "diagnosis_report.md").exists()
+    assert (tmp_path / "topology.png").exists()

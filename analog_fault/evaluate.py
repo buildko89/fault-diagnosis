@@ -1,8 +1,8 @@
 ﻿import warnings
 import numpy as np
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from .circuit import AnalogCircuit
-from .simulate import calculate_delta_v
+from .simulate import calculate_measurements
 from .diagnose import diagnose_node_faults
 
 def run_evaluation(
@@ -12,7 +12,8 @@ def run_evaluation(
     trials: int = 100,
     tol_percent: float = 0.0,
     noise_std: float = 0.0,
-    seed: int = 42
+    seed: int = 42,
+    frequencies: Optional[List[float]] = None
 ) -> Dict[str, Any]:
     """
     Runs Monte Carlo evaluation with tolerances and noise.
@@ -52,15 +53,21 @@ def run_evaluation(
     ill_conditioned_count = 0
     
     for _ in range(trials):
-        delta_v_ms, Z_mn = calculate_delta_v(
-            circuit, excitations, faulty_elements=faulty_elements, rng=rng, tol_percent=tol_percent
+        blocks = calculate_measurements(
+            circuit, excitations, faulty_elements=faulty_elements, rng=rng,
+            tol_percent=tol_percent, frequencies=frequencies
         )
-        
+
         if noise_std > 0:
-            for i in range(len(delta_v_ms)):
-                delta_v_ms[i] += rng.normal(0, noise_std, delta_v_ms[i].shape)
-        
-        diagnosis = diagnose_node_faults(circuit, Z_mn, delta_v_ms, max_faults)
+            for blk in blocks:
+                for i in range(len(blk.delta_v_ms)):
+                    dv = blk.delta_v_ms[i]
+                    noise = rng.normal(0, noise_std, dv.shape)
+                    if np.iscomplexobj(dv):
+                        noise = noise + 1j * rng.normal(0, noise_std, dv.shape)
+                    blk.delta_v_ms[i] = dv + noise
+
+        diagnosis = diagnose_node_faults(circuit, blocks, None, max_faults)
         
         best_support = set(diagnosis["best"]["support"]) if diagnosis["best"] else set()
         
@@ -87,5 +94,6 @@ def run_evaluation(
         "top3_accuracy": top3_hits / trials,
         "ambiguous_rate": ambiguous_count / trials,
         "ill_conditioned_rate": ill_conditioned_count / trials,
-        "correct_nodes": list(correct_nodes_set)
+        "correct_nodes": list(correct_nodes_set),
+        "frequencies": list(frequencies) if frequencies else None
     }
