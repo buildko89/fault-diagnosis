@@ -253,89 +253,171 @@ def diagnose_node_faults(
         "ambiguous_candidates": ambiguous_candidates
     }
 
+def _injection_blocks(circuit, measurements, best, combo_indices, rcond):
+    """
+    Returns a list of (omega, coeffs_matrix) where coeffs_matrix (r x p) holds the
+    estimated fault-injection currents at the support nodes for each excitation.
+
+    For multi-frequency input (a list of MeasurementBlock), the injections are
+    re-fit per frequency from (Z, ΔV). For the legacy DC form (delta_v_ms list),
+    the stored diagnosis coefficients are reused (omega=None).
+    """
+    is_blocks = (
+        isinstance(measurements, (list, tuple)) and len(measurements) > 0
+        and hasattr(measurements[0], "Z_mn")
+    )
+    if is_blocks:
+        blocks = []
+        for blk in measurements:
+            Z_S = np.asarray(blk.Z_mn)[:, combo_indices]
+            B = np.column_stack(blk.delta_v_ms)
+            X, _r, _rk, _s = la.lstsq(Z_S, B, cond=rcond)
+            blocks.append((blk.omega, X))
+        return blocks
+    return [(None, np.asarray(best["coefficients"]))]
+
+
+def _solve_deviation(eq_rows, eq_b, method, alpha):
+    """Solve eq_rows @ x = eq_b for the branch admittance deviations."""
+    if method == 'ridge':
+        if np.iscomplexobj(eq_rows) or np.iscomplexobj(eq_b):
+            warnings.warn(
+                "method='ridge' is not supported for complex (AC) reconstruction; "
+                "falling back to least squares.",
+                stacklevel=3,
+            )
+        else:
+            ridge = Ridge(alpha=alpha, fit_intercept=False)
+            ridge.fit(eq_rows, eq_b)
+            return ridge.coef_
+    delta, _residuals, _rank, _s = la.lstsq(eq_rows, eq_b, cond=1e-10)
+    return delta
+
+
+def _classify_branch_deviation(delta_y_by_freq: Dict[float, complex]) -> Dict[str, Any]:
+    """
+    Given a branch's admittance deviation across frequencies, fit
+        Δy(ω) = ΔG·1 + ΔC·(jω) + Δ(1/L)·(1/(jω))
+    and classify the dominant fault nature (R / C / L) from the basis that best
+    explains the frequency dependence.
+    """
+    omegas = np.array(list(delta_y_by_freq.keys()), dtype=float)
+    y = np.array(list(delta_y_by_freq.values()), dtype=complex)
+
+    # Complex design matrix [1, jω, 1/(jω)] solved for real unknowns via real/imag stacking.
+    M = np.column_stack([np.ones_like(omegas, dtype=complex),
+                         1j * omegas,
+                         1.0 / (1j * omegas)])
+    M_real = np.vstack([M.real, M.imag])
+    y_real = np.concatenate([y.real, y.imag])
+    x, _res, _rank, _s = la.lstsq(M_real, y_real, cond=1e-10)
+    delta_G, delta_C, delta_invL = (float(x[0]), float(x[1]), float(x[2]))
+
+    # Compare each basis' contribution magnitude across the measured frequencies.
+    contrib = {
+        'R': abs(delta_G) * np.linalg.norm(np.ones_like(omegas)),
+        'C': abs(delta_C) * np.linalg.norm(omegas),
+        'L': abs(delta_invL) * np.linalg.norm(1.0 / omegas),
+    }
+    classification = max(contrib, key=contrib.get)
+    delta_value = {'R': delta_G, 'C': delta_C, 'L': delta_invL}[classification]
+
+    return {
+        'classification': classification,
+        'delta_G': delta_G,
+        'delta_C': delta_C,
+        'delta_invL': delta_invL,
+        'delta_value': delta_value,
+    }
+
+
 def reconstruct_branch_faults(
     circuit: AnalogCircuit,
     faulty_nodes: List[int],
     excitations: List[np.ndarray],
-    delta_v_ms: List[np.ndarray],
+    measurements,
     diagnose_result: Dict[str, Any],
     method: str = 'lstsq',
-    alpha: float = 1.0
+    alpha: float = 1.0,
+    rcond: float = 1e-10,
 ) -> Dict[str, Any]:
     """
-    Reconstructs branch admittance deviations (Delta g) for the given faulty nodes.
-    Supports method='lstsq' or method='ridge' (for L2 regularization).
+    Reconstructs branch admittance deviations for the diagnosed faulty nodes.
+
+    ``measurements`` may be the legacy ``delta_v_ms`` list (DC) or a list of
+    MeasurementBlock objects (multi-frequency / AC). For DC, results carry the
+    real admittance deviation as 'delta_g' (backward compatible). For AC, results
+    carry the per-frequency complex deviation 'delta_y_by_freq' and, when >= 2
+    frequencies are available, a R/C/L classification of the fault.
+
+    method='lstsq' (default) or 'ridge' (L2 regularization, real/DC only).
     """
     if not diagnose_result.get("best"):
         return {}
-        
+
     best = diagnose_result["best"]
     support_nodes = best["support"]
-    
     combo_indices = [circuit.global_to_reduced[circuit.node_to_idx[node]] for node in support_nodes]
-    
-    A_nom, Yb_nom, Y_nom = circuit.build_matrices(faulty_elements=None)
-    
-    candidate_branch_indices = []
-    for idx, el in enumerate(circuit.config.elements):
-        if el.n1 in faulty_nodes or el.n2 in faulty_nodes:
-            candidate_branch_indices.append(idx)
-            
-    num_candidates = len(candidate_branch_indices)
-    if num_candidates == 0:
+
+    candidate_branch_indices = [
+        idx for idx, el in enumerate(circuit.config.elements)
+        if el.n1 in faulty_nodes or el.n2 in faulty_nodes
+    ]
+    if len(candidate_branch_indices) == 0:
         return {}
-        
-    eq_rows = []
-    eq_b = []
-    
-    coeffs_matrix = np.array(best["coefficients"]) # shape: (r, num_excitations)
-    
-    for p in range(len(excitations)):
-        J = excitations[p]
-        delta_v_m = delta_v_ms[p]
-        
-        j_n_est = np.zeros(circuit.num_free_nodes)
-        for i, row_idx in enumerate(combo_indices):
-            j_n_est[row_idx] = coeffs_matrix[i, p]
-            
-        v_nom = spla.spsolve(Y_nom, J)
-        delta_v_est = spla.spsolve(Y_nom, j_n_est)
-        
-        v_f_est = v_nom + delta_v_est
-        v_bf_est = A_nom.T @ v_f_est
-        
-        for node_i in faulty_nodes:
-            if node_i == circuit.reference_node:
-                continue
-            row_idx = circuit.global_to_reduced[circuit.node_to_idx[node_i]]
-            rhs = j_n_est[row_idx]
-            
-            coeffs = []
-            for e_idx in candidate_branch_indices:
-                coeff = - A_nom[row_idx, e_idx] * v_bf_est[e_idx]
-                coeffs.append(coeff)
-                
-            eq_rows.append(coeffs)
-            eq_b.append(rhs)
-            
-    eq_rows = np.array(eq_rows)
-    eq_b = np.array(eq_b)
-    
-    if method == 'ridge':
-        ridge = Ridge(alpha=alpha, fit_intercept=False)
-        ridge.fit(eq_rows, eq_b)
-        delta_g_est = ridge.coef_
-    else:
-        delta_g_est, residuals, rank, s = la.lstsq(eq_rows, eq_b, cond=1e-10)
-    
+
+    inj_blocks = _injection_blocks(circuit, measurements, best, combo_indices, rcond)
+
+    # Estimate the branch admittance deviation at each frequency.
+    delta_y_by_freq: Dict[Any, np.ndarray] = {}
+    for omega, coeffs_matrix in inj_blocks:
+        coeffs_matrix = np.asarray(coeffs_matrix)
+        A_nom, _Yb_nom, Y_nom = circuit.build_matrices(faulty_elements=None, omega=omega)
+
+        eq_rows, eq_b = [], []
+        for p in range(len(excitations)):
+            J = excitations[p]
+            j_n_est = np.zeros(circuit.num_free_nodes, dtype=coeffs_matrix.dtype)
+            for i, row_idx in enumerate(combo_indices):
+                j_n_est[row_idx] = coeffs_matrix[i, p]
+
+            v_nom = spla.spsolve(Y_nom, J)
+            delta_v_est = spla.spsolve(Y_nom, j_n_est)
+            v_bf_est = A_nom.T @ (v_nom + delta_v_est)
+
+            for node_i in faulty_nodes:
+                if node_i == circuit.reference_node:
+                    continue
+                row_idx = circuit.global_to_reduced[circuit.node_to_idx[node_i]]
+                eq_b.append(j_n_est[row_idx])
+                eq_rows.append([-A_nom[row_idx, e_idx] * v_bf_est[e_idx]
+                                for e_idx in candidate_branch_indices])
+
+        delta_y_by_freq[omega] = _solve_deviation(np.array(eq_rows), np.array(eq_b), method, alpha)
+
+    is_dc = len(inj_blocks) == 1 and inj_blocks[0][0] is None
+
     results = {}
     for i, e_idx in enumerate(candidate_branch_indices):
         el = circuit.config.elements[e_idx]
-        results[el.name] = {
-            'branch_idx': e_idx,
-            'nominal_g': el.value,
-            'delta_g': delta_g_est[i],
-            'estimated_g': el.value + delta_g_est[i]
-        }
-        
+        if is_dc:
+            delta_g = float(np.real(delta_y_by_freq[None][i]))
+            results[el.name] = {
+                'branch_idx': e_idx,
+                'nominal_g': el.value,
+                'delta_g': delta_g,
+                'estimated_g': el.value + delta_g,
+            }
+        else:
+            dy = {float(omega): complex(delta_y_by_freq[omega][i]) for omega in delta_y_by_freq}
+            entry = {
+                'branch_idx': e_idx,
+                'type': el.type,
+                'nominal_value': el.value,
+                'delta_y_by_freq': dy,
+            }
+            if len(dy) >= 2:
+                entry.update(_classify_branch_deviation(dy))
+            results[el.name] = entry
+
     return results

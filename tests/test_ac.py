@@ -8,7 +8,7 @@ import pytest
 from analog_fault.schema import CircuitConfig, Element
 from analog_fault.circuit import AnalogCircuit, element_admittance
 from analog_fault.simulate import calculate_measurements, calculate_delta_v
-from analog_fault.diagnose import diagnose_node_faults
+from analog_fault.diagnose import diagnose_node_faults, reconstruct_branch_faults
 
 
 # --------------------------------------------------------------------------
@@ -206,3 +206,63 @@ def test_diagnose_blocks_api_runs_with_omp():
     result = diagnose_node_faults(circuit, blocks, None, max_faults=2, method="omp")
     assert result["best"] is not None
     assert 1 <= len(result["best"]["support"]) <= 2
+
+
+# --------------------------------------------------------------------------
+# reconstruct: 複素・多周波数の枝再構築と R/C/L 種別分類 (Phase 5 / 5b)
+# --------------------------------------------------------------------------
+def test_ac_reconstruction_classifies_capacitor_fault():
+    circuit = _ac_bridge_with_cap()
+    exc = _unit_excitations(circuit)
+    blocks = calculate_measurements(
+        circuit, exc, faulty_elements={"C4": 0.5e-3}, frequencies=[1000.0, 5000.0]
+    )
+    result = diagnose_node_faults(circuit, blocks, None, max_faults=2)
+    support = sorted(result["best"]["support"])
+
+    branch = reconstruct_branch_faults(circuit, support, exc, blocks, result)
+
+    assert "C4" in branch
+    c4 = branch["C4"]
+    assert c4["type"] == "C"
+    assert c4["classification"] == "C"               # identified as a capacitor fault
+    assert c4["delta_C"] == pytest.approx(-0.5e-3, rel=1e-4)
+    # Δy(ω) ≈ jω·ΔC at every measured frequency.
+    for omega, dy in c4["delta_y_by_freq"].items():
+        assert dy == pytest.approx(1j * omega * (-0.5e-3), abs=1e-9)
+
+
+def test_ac_reconstruction_healthy_branches_near_zero():
+    circuit = _ac_bridge_with_cap()
+    exc = _unit_excitations(circuit)
+    blocks = calculate_measurements(
+        circuit, exc, faulty_elements={"C4": 0.5e-3}, frequencies=[1000.0, 5000.0]
+    )
+    result = diagnose_node_faults(circuit, blocks, None, max_faults=2)
+    support = sorted(result["best"]["support"])
+
+    branch = reconstruct_branch_faults(circuit, support, exc, blocks, result)
+    for name in ("R1", "R5", "R6"):
+        for dy in branch[name]["delta_y_by_freq"].values():
+            assert abs(dy) < 1e-6
+
+
+def test_ac_reconstruction_classifies_resistor_fault():
+    circuit = _ac_bridge_with_cap()
+    exc = _unit_excitations(circuit)
+    # Resistor R5 (node2-node4) conductance 1.0 -> 2.0  => ΔG = +1.0
+    blocks = calculate_measurements(
+        circuit, exc, faulty_elements={"R5": 2.0}, frequencies=[1000.0, 5000.0]
+    )
+    result = diagnose_node_faults(circuit, blocks, None, max_faults=2)
+    support = sorted(result["best"]["support"])
+
+    branch = reconstruct_branch_faults(circuit, support, exc, blocks, result)
+
+    assert "R5" in branch
+    r5 = branch["R5"]
+    assert r5["classification"] == "R"
+    assert r5["delta_G"] == pytest.approx(1.0, rel=1e-4)
+    # A resistor's deviation is frequency-independent (imaginary part ~0).
+    for dy in r5["delta_y_by_freq"].values():
+        assert dy.imag == pytest.approx(0.0, abs=1e-6)
