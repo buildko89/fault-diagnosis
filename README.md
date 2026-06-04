@@ -1,6 +1,7 @@
-# Analog Circuit Fault Diagnosis Tool
+# Circuit Fault Diagnosis Tool
 
-アナログ回路におけるハードウェア故障（枝アドミタンスの変動）を検知・診断するためのPythonベースの診断ツール（PoC）です。
+電子回路におけるハードウェア故障（枝アドミタンスの変動）を検知・診断するためのPythonベースの診断ツール（PoC）です。
+抵抗(R)・容量(C)・インダクタンス(L)を含む回路を、複数周波数(AC)で診断・故障素子の種別（R/C/L）まで同定できます。
 Huang-Lin-Liu (1983) および Togawa-Matsumoto (1984) の理論に基づき、大規模回路にも対応可能な最新のスパースモデリング（OMP）を導入しています。
 
 ## 💡 このツールの「何がうれしいのか？」「何がすごいのか？」
@@ -16,6 +17,7 @@ Huang-Lin-Liu (1983) および Togawa-Matsumoto (1984) の理論に基づき、�
 
 ## 🌟 主な機能
 
+* **R/C/L・AC（複数周波数）対応**: 抵抗だけでなく容量・インダクタンスを含む回路を、複数の測定周波数で診断できます。複素アドミタンスで解き、故障枝の周波数依存性から **R/C/L の種別と変動量**を同定します。
 * **k-Node Testability の判定**: 回路のトポロジーとアクセス可能ノード（測定端子）の配置から、最大 $k$ 個の故障を特定可能かを事前判定します。
 * **大規模回路対応（Sparse Matrix）**: `scipy.sparse` を用いた疎行列計算により、数千ノード規模の回路方程式も高速かつ省メモリに構築・求解します。
 * **スパースモデリングによる高速診断（OMP）**: 従来の組み合わせ爆発を引き起こす全探索（Exhaustive Search）に代わり、`scikit-learn` の **Orthogonal Matching Pursuit (OMP)** を用いて故障ノードを高速に推定します。
@@ -51,12 +53,12 @@ pip install -e ".[dev]"
 │   ├── schema.py        # 回路定義 (dataclass) と YAML ロード・バリデーション
 │   ├── circuit.py       # 疎行列によるアドミタンス行列 (A, Yb, Y) 構築
 │   ├── testability.py   # k-node テスタビリティ判定 (最大流 / 頂点独立パス)
-│   ├── simulate.py      # ΔV と転送インピーダンス行列 Z_mn の算出
-│   ├── diagnose.py      # 故障ノード診断 (auto / exhaustive / S-OMP) と枝再構築
-│   ├── evaluate.py      # モンテカルロ精度評価 (公差・ノイズ)
+│   ├── simulate.py      # 周波数ごとの ΔV と転送インピーダンス Z_mn (MeasurementBlock)
+│   ├── diagnose.py      # 故障ノード診断 (auto / exhaustive / S-OMP) と枝再構築・R/C/L 分類
+│   ├── evaluate.py      # モンテカルロ精度評価 (公差・ノイズ・複数周波数)
 │   ├── reporter.py      # Markdown レポート + トポロジー/ΔV 図の生成
 │   └── cli.py           # CLI (testability / diagnose / evaluate)
-├── examples/            # サンプル回路 (bridge.yaml, ladder.yaml)
+├── examples/            # サンプル回路 (bridge.yaml, ladder.yaml, rc_bridge.yaml)
 ├── tests/               # pytest 回帰テスト
 ├── prototype.py         # デモスクリプト
 ├── requirements.txt
@@ -73,8 +75,8 @@ pip install -e ".[dev]"
 |:---|:---|:---|
 | `circuit.py` | 回路網のモデリング | `sp.lil_matrix` と `csr_matrix` を用いた疎行列ベースのアドミタンス行列 ($Y$, $A$, $Y_b$) 構築 |
 | `testability.py` | 故障診断可能性の事前判定 | NetworkXを用いたノード間の独立パス（Vertex Disjoint Paths）探索 |
-| `simulate.py` | 回路シミュレーション | `scipy.sparse.linalg.spsolve` を利用した安定した連立方程式求解（$\Delta V$ の算出） |
-| `diagnose.py` | 故障ノード・アドミタンス変動量の推定 | Strategyパターン（`method='auto'` / `'exhaustive'` / `'omp'`(S-OMP)）。枝アドミタンス再構築では L2正則化（Ridge回帰）も選択可 |
+| `simulate.py` | 回路シミュレーション | 周波数ごとに複素 $Y(\omega)$ を `spsolve` で求解し `MeasurementBlock`（$\Delta V$, $Z_{mn}$）を生成 |
+| `diagnose.py` | 故障ノード・アドミタンス変動量の推定 | Strategyパターン（`method='auto'` / `'exhaustive'` / `'omp'`(S-OMP)）。複数周波数を結合して診断し、枝再構築では R/C/L 種別同定や L2正則化（Ridge回帰）も選択可 |
 | `reporter.py` | 解析結果の可視化とレポート生成 | ヘッドレスモード(`Agg`)でのトポロジー図・電圧偏差グラフ出力および Markdown レポート出力 |
 
 ### 故障診断アルゴリズムの比較
@@ -86,6 +88,8 @@ pip install -e ".[dev]"
 | **全探索** | `method='exhaustive'` | 故障ノードの組み合わせを総当たりし、最小二乗法で厳密解を探索。計算量は $O(_nC_k)$。対称回路でも確実。 | 小〜中規模回路、理論検証、テストでの完全一致確認。 |
 
 > ⚠️ **精度に関する注意**: OMP / L1 などのスパース近似は、ブリッジのような対称回路や内部ノードの故障（例: 故障signatureが特定の組み合わせでしか現れないケース）を構造的に取りこぼすことがあります。小規模回路では既定の `auto`（=全探索）を使うことを推奨します。
+>
+> 💡 **多周波数の効果**: 複数の周波数で測定すると、support 選択に対する独立な制約が増え、識別可能性が向上します（リアクタンス素子を含む回路で特に有効）。`frequencies` / `--freq` に複数の値を与えてください。
 
 ---
 
@@ -131,6 +135,55 @@ result = diagnose_node_faults(circuit, Z_mn, delta_v_ms, max_faults=1)
 print("故障ノード:", result['best']['support'])
 ```
 
+### 3. AC（複数周波数）での診断と R/C/L 種別同定
+
+容量(C)・インダクタンス(L)を含む回路では、`frequencies`（Hz）を指定し `calculate_measurements` で周波数ごとの観測ブロックを得ます。`diagnose_node_faults` はブロックのリストをそのまま受け取れます。
+
+```python
+from analog_fault.simulate import calculate_measurements
+from analog_fault.diagnose import diagnose_node_faults, reconstruct_branch_faults
+
+# C/L を含む回路（frequencies は Hz、内部で ω=2πf に変換）
+config = CircuitConfig(
+    name="rc", reference=0, nodes=[0, 1, 2], accessible=[1, 2],
+    frequencies=[1000.0, 5000.0],
+    elements=[
+        Element("R1", "R", 1, 0, 1.0),
+        Element("C1", "C", 1, 2, 1.0e-3),   # value = 容量[F]
+    ],
+)
+circuit = AnalogCircuit(config)
+excitations = [np.array([1.0, 0.0]), np.array([0.0, 1.0])]
+
+# 周波数ごとの観測ブロックを取得し、そのまま診断
+blocks = calculate_measurements(circuit, excitations,
+                                faulty_elements={"C1": 0.5e-3}, frequencies=config.frequencies)
+result = diagnose_node_faults(circuit, blocks, None, max_faults=2)
+
+# 故障枝の複素アドミタンス偏差と R/C/L 種別を再構築
+branch = reconstruct_branch_faults(circuit, sorted(result['best']['support']),
+                                   excitations, blocks, result)
+# 例: branch['C1']['classification'] == 'C', branch['C1']['delta_C'] ≈ -0.5e-3
+```
+
+### 4. CLI からの実行
+
+```bash
+# テスタビリティ判定
+analog-fault testability examples/bridge.yaml --k 2
+
+# DC 診断
+analog-fault diagnose examples/bridge.yaml --fault R4=0.1 --k 2
+
+# AC 診断（--freq か、YAML の frequencies を使用）
+analog-fault diagnose examples/rc_bridge.yaml --fault C4=0.5e-3 --k 2 --freq 1000,5000
+
+# モンテカルロ評価
+analog-fault evaluate examples/rc_bridge.yaml --fault C4=0.5e-3 --k 2 --trials 100
+```
+
+*(`pip install -e .` していない場合は `python -m analog_fault.cli ...` でも実行できます)*
+
 ---
 
 ## 📊 レポート自動生成機能
@@ -147,6 +200,7 @@ print("故障ノード:", result['best']['support'])
    * <span style="color:gray">**灰色**</span>: アクセス不可（内部）ノード
 3. **`delta_v.png`**:
    * アクセス可能ノードにおける、観測された電圧偏差 $\Delta V_m$ を示す棒グラフ。
+   * AC（複素 $\Delta V_m$）の場合は、**振幅と位相**の2段グラフを出力します。
 
 ---
 
@@ -163,7 +217,8 @@ pytest tests/
 
 ## ⚠️ 制約事項 (Limitations)
 
-* **素子は実コンダクタンス (`type: R`) のみ対応**。容量・インダクタンス（複素アドミタンス）や AC・周波数掃引には未対応です（PoC のスコープ）。
+* **対応素子は R / C / L**（線形・受動素子）。能動素子やダイオード等の非線形素子、相互インダクタンスには未対応です（PoC のスコープ）。
+* **C/L を含む回路は周波数の指定が必須**です（DC では C は開放・L は短絡となり評価できないため、`frequencies` または `--freq` に正の周波数を 1 つ以上指定してください）。
 * **OMP は近似解法**です。対称性の高い回路や内部（非アクセス）ノードの故障では取りこぼす場合があるため、小〜中規模では既定の `auto`（自動で全探索）を使用してください。詳細は上記「故障診断アルゴリズムの比較」を参照。
 * 診断段の転送インピーダンス行列 `Z_mn` は密行列として保持されるため、超大規模回路ではメモリ・計算量に注意が必要です。
 
