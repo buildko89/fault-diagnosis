@@ -7,6 +7,7 @@ import pytest
 
 from analog_fault.schema import CircuitConfig, Element
 from analog_fault.circuit import AnalogCircuit, element_admittance
+from analog_fault.simulate import calculate_measurements, calculate_delta_v
 
 
 # --------------------------------------------------------------------------
@@ -81,3 +82,62 @@ def test_build_matrices_faulty_value_is_component_value():
     omega = 2.0
     _, _, Y = circuit.build_matrices(faulty_elements={"C1": 3.0}, omega=omega)
     assert Y.toarray()[0, 0] == pytest.approx(1.0 + 6.0j)
+
+
+# --------------------------------------------------------------------------
+# calculate_measurements: 多周波数の複素シミュレーション
+# --------------------------------------------------------------------------
+def test_calculate_measurements_rc_matches_analytic():
+    # 1 free node (node1), shunt G=1 and C=1 to ground; inject 1 A at node1.
+    circuit = _rc_shunt_circuit()
+    f = 1.0
+    omega = 2.0 * np.pi * f
+    G, C, Cf = 1.0, 1.0, 2.0
+    excitations = [np.array([1.0])]
+
+    blocks = calculate_measurements(
+        circuit, excitations, faulty_elements={"C1": Cf}, frequencies=[f]
+    )
+    assert len(blocks) == 1
+    blk = blocks[0]
+    assert blk.omega == pytest.approx(omega)
+
+    # Z_mn = 1 / Y_nom = 1/(G + j*omega*C)
+    assert blk.Z_mn.shape == (1, 1)
+    assert blk.Z_mn[0, 0] == pytest.approx(1.0 / (G + 1j * omega * C))
+
+    # ΔV = 1/(G + j*omega*Cf) - 1/(G + j*omega*C)
+    expected = 1.0 / (G + 1j * omega * Cf) - 1.0 / (G + 1j * omega * C)
+    assert blk.delta_v_ms[0][0] == pytest.approx(expected)
+
+
+def test_calculate_measurements_multiple_frequencies():
+    circuit = _rc_shunt_circuit()
+    freqs = [10.0, 100.0, 1000.0]
+    blocks = calculate_measurements(
+        circuit, [np.array([1.0])], faulty_elements={"C1": 2.0}, frequencies=freqs
+    )
+    assert len(blocks) == 3
+    assert [b.omega for b in blocks] == pytest.approx([2 * np.pi * f for f in freqs])
+    # Each block carries complex measurements.
+    for b in blocks:
+        assert np.iscomplexobj(b.Z_mn)
+        assert np.iscomplexobj(b.delta_v_ms[0])
+
+
+def test_calculate_delta_v_wrapper_matches_single_block():
+    # The DC wrapper must return exactly the single-block result.
+    cfg = CircuitConfig("r", reference=0, nodes=[0, 1, 2], accessible=[1, 2],
+                        elements=[Element("R1", "R", 1, 0, 1.0),
+                                  Element("R2", "R", 1, 2, 1.0),
+                                  Element("R3", "R", 2, 0, 1.0)])
+    circuit = AnalogCircuit(cfg)
+    exc = [np.array([1.0, 0.0]), np.array([0.0, 1.0])]
+
+    dv, Z = calculate_delta_v(circuit, exc, faulty_elements={"R2": 0.1})
+    block = calculate_measurements(circuit, exc, faulty_elements={"R2": 0.1})[0]
+
+    assert np.allclose(Z, block.Z_mn)
+    assert block.omega is None
+    for a, b in zip(dv, block.delta_v_ms):
+        assert np.allclose(a, b)
