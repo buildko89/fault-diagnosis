@@ -62,9 +62,53 @@ def test_validate_rejects_duplicate_element_names():
 
 def test_validate_rejects_unsupported_type():
     cfg = CircuitConfig("c", reference=0, nodes=[0, 1], accessible=[1],
-                        elements=[Element("C1", "C", 0, 1, 1.0)])
+                        elements=[Element("X1", "X", 0, 1, 1.0)])
     with pytest.raises(ValueError, match="unsupported type"):
         validate_config(cfg)
+
+
+def test_validate_accepts_rcl_types_with_frequencies():
+    cfg = CircuitConfig("rcl", reference=0, nodes=[0, 1, 2], accessible=[1, 2],
+                        elements=[Element("R1", "R", 1, 0, 1.0),
+                                  Element("C1", "C", 1, 2, 1e-6),
+                                  Element("L1", "L", 2, 0, 1e-3)],
+                        frequencies=[1000.0, 5000.0])
+    validate_config(cfg)  # should not raise
+
+
+def test_validate_rejects_reactive_without_frequency():
+    cfg = CircuitConfig("rc", reference=0, nodes=[0, 1, 2], accessible=[1, 2],
+                        elements=[Element("R1", "R", 1, 0, 1.0),
+                                  Element("C1", "C", 1, 2, 1e-6)])
+    with pytest.raises(ValueError, match="require at least one positive frequency"):
+        validate_config(cfg)
+
+
+def test_validate_rejects_nonpositive_frequency():
+    cfg = CircuitConfig("rc", reference=0, nodes=[0, 1, 2], accessible=[1, 2],
+                        elements=[Element("R1", "R", 1, 0, 1.0),
+                                  Element("C1", "C", 1, 2, 1e-6)],
+                        frequencies=[0.0])
+    with pytest.raises(ValueError, match="Frequencies must be positive"):
+        validate_config(cfg)
+
+
+def test_load_circuit_yaml_reads_frequencies(tmp_path):
+    yaml_text = """
+name: rc
+reference: 0
+nodes: [0, 1, 2]
+accessible: [1, 2]
+frequencies: [1000.0, 2000.0]
+elements:
+  - {name: R1, type: R, n1: 1, n2: 0, value: 1.0}
+  - {name: C1, type: C, n1: 1, n2: 2, value: 1.0e-6}
+"""
+    p = tmp_path / "rc.yaml"
+    p.write_text(yaml_text, encoding="utf-8")
+    cfg = load_circuit_yaml(str(p))
+    assert cfg.frequencies == [1000.0, 2000.0]
+    assert cfg.elements[1] == Element("C1", "C", 1, 2, 1.0e-6)
 
 
 def test_validate_rejects_nonpositive_value():

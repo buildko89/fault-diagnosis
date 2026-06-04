@@ -1,7 +1,13 @@
 ﻿from dataclasses import dataclass, field
-from typing import List, Dict, Any
+from typing import List
 import yaml
-import os
+
+# Supported element types and the meaning of `Element.value`:
+#   R -> conductance G [S]  (admittance: G,           frequency-independent)
+#   C -> capacitance C [F]  (admittance: j*omega*C)
+#   L -> inductance  L [H]  (admittance: 1/(j*omega*L))
+SUPPORTED_TYPES = ('R', 'C', 'L')
+REACTIVE_TYPES = ('C', 'L')
 
 @dataclass
 class Element:
@@ -18,21 +24,26 @@ class CircuitConfig:
     nodes: List[int]
     accessible: List[int]
     elements: List[Element] = field(default_factory=list)
+    # Measurement frequencies in Hz. Empty -> DC (only valid when all elements
+    # are resistors). Reactive elements (C/L) require at least one positive
+    # frequency. Internally converted to angular frequency omega = 2*pi*f.
+    frequencies: List[float] = field(default_factory=list)
 
 def load_circuit_yaml(file_path: str) -> CircuitConfig:
     with open(file_path, 'r', encoding='utf-8') as f:
         data = yaml.safe_load(f)
-    
+
     elements = [Element(**el) for el in data.get('elements', [])]
-    
+
     config = CircuitConfig(
         name=data['name'],
         reference=data['reference'],
         nodes=data['nodes'],
         accessible=data['accessible'],
-        elements=elements
+        elements=elements,
+        frequencies=data.get('frequencies', [])
     )
-    
+
     validate_config(config)
     return config
 
@@ -56,12 +67,33 @@ def validate_config(config: CircuitConfig):
 
     for el in config.elements:
         # Supported types
-        if el.type not in ['R']:
-            raise ValueError(f"Element {el.name} has unsupported type '{el.type}'. Only 'R' is supported in MVP.")
-            
+        if el.type not in SUPPORTED_TYPES:
+            raise ValueError(
+                f"Element {el.name} has unsupported type '{el.type}'. "
+                f"Supported types: {', '.join(SUPPORTED_TYPES)}."
+            )
+
         if el.n1 not in config.nodes or el.n2 not in config.nodes:
             raise ValueError(f"Element {el.name} refers to nodes not in nodes list.")
         if el.n1 == el.n2:
             raise ValueError(f"Element {el.name} has identical nodes {el.n1} and {el.n2}.")
         if el.value <= 0:
-            raise ValueError(f"Element {el.name} must have positive value (conductance).")
+            raise ValueError(
+                f"Element {el.name} must have a positive value "
+                f"(conductance for R, capacitance for C, inductance for L)."
+            )
+
+    # Frequency validation.
+    for f in config.frequencies:
+        if f <= 0:
+            raise ValueError(f"Frequencies must be positive (got {f}).")
+
+    # Reactive elements (C/L) are frequency-dependent and cannot be evaluated at
+    # DC; require at least one measurement frequency when any are present.
+    has_reactive = any(el.type in REACTIVE_TYPES for el in config.elements)
+    if has_reactive and not config.frequencies:
+        reactive_names = [el.name for el in config.elements if el.type in REACTIVE_TYPES]
+        raise ValueError(
+            "Reactive elements (C/L) require at least one positive frequency in "
+            f"'frequencies'; offending elements: {reactive_names}."
+        )
