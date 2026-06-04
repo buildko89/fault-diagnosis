@@ -5,49 +5,75 @@ import scipy.linalg as la
 import scipy.sparse.linalg as spla
 from sklearn.linear_model import Ridge
 import itertools
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from .circuit import AnalogCircuit
+
+
+def _as_blocks(Z_mn, delta_v_ms) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """
+    Normalize diagnosis inputs into a list of (Z, B) blocks, where B is the
+    column-stacked measurement matrix (m x p). Accepts either:
+      - a list of MeasurementBlock-like objects (attributes ``Z_mn`` and
+        ``delta_v_ms``) for the multi-frequency case, or
+      - the legacy single-block form (Z_mn ndarray, delta_v_ms list).
+    """
+    if isinstance(Z_mn, (list, tuple)):
+        return [(np.asarray(blk.Z_mn), np.column_stack(blk.delta_v_ms)) for blk in Z_mn]
+    return [(np.asarray(Z_mn), np.column_stack(delta_v_ms))]
 
 
 def _build_candidate(
     circuit: AnalogCircuit,
-    Z_mn: np.ndarray,
-    delta_v_ms: List[np.ndarray],
+    blocks: List[Tuple[np.ndarray, np.ndarray]],
     combo: List[int],
     rcond: float,
 ) -> Dict[str, Any]:
     """
-    Given a candidate support (list of column indices into Z_mn), solve the
-    least-squares fit over all excitations and package the diagnostic metrics.
+    Given a candidate support (list of column indices into Z), solve the
+    least-squares fit and package the diagnostic metrics. Coefficients are fit
+    independently per block (per frequency), while the support is shared; the
+    residual is the root-sum-square across all blocks and excitations.
     Shared by both the OMP and exhaustive paths to avoid duplication.
     """
     combo = list(combo)
-    num_excitations = len(delta_v_ms)
-    B = np.column_stack(delta_v_ms)
-    total_b_norm = np.sqrt(sum(la.norm(b) ** 2 for b in delta_v_ms))
+    num_excitations = blocks[0][1].shape[1]
+    total_b_norm = np.sqrt(sum(la.norm(B) ** 2 for _, B in blocks))
 
     if len(combo) > 0:
-        Z_S = Z_mn[:, combo]
-        X_est, residuals, rank, s = la.lstsq(Z_S, B, cond=rcond)
+        total_residual_sq = 0.0
+        worst_cond = 0.0
+        min_s_overall = np.inf
+        min_rank = None
+        coeffs_block0 = None
 
-        total_residual = 0.0
-        for p in range(num_excitations):
-            proj_val = Z_S @ X_est[:, p]
-            total_residual += la.norm(delta_v_ms[p] - proj_val) ** 2
-        total_residual = np.sqrt(total_residual)
+        for bi, (Z, B) in enumerate(blocks):
+            Z_S = Z[:, combo]
+            X_est, _residuals, rank, s = la.lstsq(Z_S, B, cond=rcond)
+            total_residual_sq += la.norm(B - Z_S @ X_est) ** 2
 
-        if len(s) > 0:
-            cond = s[0] / s[-1] if s[-1] > 1e-15 else float('inf')
-            min_s = s[-1]
-        else:
-            cond = float('inf')
-            min_s = 0.0
+            if len(s) > 0:
+                cond = s[0] / s[-1] if s[-1] > 1e-15 else float('inf')
+                worst_cond = max(worst_cond, cond)
+                min_s_overall = min(min_s_overall, s[-1])
+            else:
+                worst_cond = float('inf')
+                min_s_overall = 0.0
+
+            min_rank = rank if min_rank is None else min(min_rank, rank)
+            if bi == 0:
+                coeffs_block0 = X_est
+
+        total_residual = np.sqrt(total_residual_sq)
+        cond = worst_cond
+        min_s = min_s_overall if np.isfinite(min_s_overall) else 0.0
+        rank = int(min_rank)
+        X_out = coeffs_block0
     else:
-        X_est = np.zeros((0, num_excitations))
         total_residual = total_b_norm
         cond = float('inf')
         min_s = 0.0
         rank = 0
+        X_out = np.zeros((0, num_excitations))
 
     relative_residual = total_residual / total_b_norm if total_b_norm > 1e-12 else total_residual
     support_nodes = [circuit.idx_to_node[circuit.free_indices[idx]] for idx in combo]
@@ -59,44 +85,49 @@ def _build_candidate(
         "rank": int(rank),
         "condition_number": float(cond),
         "min_singular_value": float(min_s),
-        "coefficients": X_est.tolist(),
+        # Per-block-0 coefficients (= the single block in the DC case), shape (r, p).
+        "coefficients": np.asarray(X_out).tolist(),
     }
 
 
 def _somp_support(
-    Z_mn: np.ndarray,
-    delta_v_ms: List[np.ndarray],
+    blocks: List[Tuple[np.ndarray, np.ndarray]],
     max_k: int,
     rcond: float,
     residual_tol: float,
 ) -> List[int]:
     """
-    Simultaneous Orthogonal Matching Pursuit (S-OMP) for the multiple-measurement
-    (multiple-excitation) problem Z_mn @ J = [ΔV_1 ... ΔV_p].
+    Simultaneous Orthogonal Matching Pursuit (S-OMP) for the multi-block,
+    multi-excitation problem Z^(f) @ J^(f) = B^(f) (one block per frequency).
 
-    Unlike applying scikit-learn's single-vector OMP to ``sum(|ΔV|)`` (which
-    destroys the sign/linearity of the system), S-OMP enforces a *joint* support
-    across all excitation columns by scoring atoms on the summed, column-norm
-    normalized correlation with the residual. It also stops early once the
-    relative residual drops below ``residual_tol``, so it never selects more
-    faulty nodes than the data actually supports (no over-selection).
+    The support is selected *jointly* across all blocks and excitation columns by
+    scoring atoms on the summed, column-norm-normalized correlation with the
+    residual (using the conjugate transpose, so complex/AC data is handled
+    correctly). Coefficients are then re-fit independently per block. The search
+    stops once the relative residual drops below ``residual_tol``, so it never
+    selects more faulty nodes than the data supports (no over-selection).
     """
-    B = np.column_stack(delta_v_ms)
-    b_norm = la.norm(B)
-    if b_norm <= 1e-12:
+    b_norm_total = np.sqrt(sum(la.norm(B) ** 2 for _, B in blocks))
+    if b_norm_total <= 1e-12:
         # No measurable deviation -> no fault.
         return []
 
-    col_norms = np.linalg.norm(Z_mn, axis=0)
-    safe_col_norms = np.where(col_norms > 1e-15, col_norms, np.inf)
+    n = blocks[0][0].shape[1]
+    safe_col_norms = []
+    residuals = []
+    for Z, B in blocks:
+        col_norms = np.linalg.norm(Z, axis=0)
+        safe_col_norms.append(np.where(col_norms > 1e-15, col_norms, np.inf))
+        residuals.append(B.copy())
 
-    residual = B.copy()
     support: List[int] = []
 
     for _ in range(max_k):
-        # Joint correlation score across all excitation columns.
-        corr = np.abs(Z_mn.T @ residual) / safe_col_norms[:, None]
-        score = corr.sum(axis=1)
+        # Joint correlation score across all blocks and excitation columns.
+        score = np.zeros(n)
+        for (Z, _B), sn, residual in zip(blocks, safe_col_norms, residuals):
+            corr = np.abs(Z.conj().T @ residual) / sn[:, None]
+            score += corr.sum(axis=1)
         if support:
             score[support] = -np.inf
         j = int(np.argmax(score))
@@ -104,11 +135,15 @@ def _somp_support(
             break
         support.append(j)
 
-        Z_S = Z_mn[:, support]
-        X, _res, _rank, _s = la.lstsq(Z_S, B, cond=rcond)
-        residual = B - Z_S @ X
+        # Independent per-block (per-frequency) refit and residual update.
+        res_total_sq = 0.0
+        for bi, (Z, B) in enumerate(blocks):
+            Z_S = Z[:, support]
+            X, _res, _rank, _s = la.lstsq(Z_S, B, cond=rcond)
+            residuals[bi] = B - Z_S @ X
+            res_total_sq += la.norm(residuals[bi]) ** 2
 
-        if la.norm(residual) / b_norm <= residual_tol:
+        if np.sqrt(res_total_sq) / b_norm_total <= residual_tol:
             break
 
     return sorted(support)
@@ -144,11 +179,19 @@ def diagnose_node_faults(
     For the OMP path, ``omp_residual_tol`` is the relative-residual threshold at
     which the greedy search stops adding faulty nodes. This prevents reporting
     more faults than the data supports when the true fault count < max_faults.
+
+    Inputs may be either the legacy single-block form (``Z_mn`` ndarray +
+    ``delta_v_ms`` list) or a list of MeasurementBlock objects passed as ``Z_mn``
+    (for multi-frequency / AC diagnosis); in the latter case ``delta_v_ms`` is
+    ignored. Multiple frequencies add independent constraints on the support and
+    improve identifiability on coherent/symmetric circuits.
     """
-    m, n = Z_mn.shape
+    blocks = _as_blocks(Z_mn, delta_v_ms)
+    m, n = blocks[0][0].shape
 
     # A node fault can only be resolved if there are enough independent
-    # measurements; selecting more than m faulty nodes is not identifiable.
+    # measurements per frequency; selecting more than m faulty nodes is not
+    # identifiable.
     max_k = min(max_faults, m, n)
     if max_faults > m:
         warnings.warn(
@@ -166,14 +209,14 @@ def diagnose_node_faults(
     candidates = []
 
     if resolved_method == 'omp':
-        support = _somp_support(Z_mn, delta_v_ms, max_k, rcond, omp_residual_tol)
-        candidates.append(_build_candidate(circuit, Z_mn, delta_v_ms, support, rcond))
+        support = _somp_support(blocks, max_k, rcond, omp_residual_tol)
+        candidates.append(_build_candidate(circuit, blocks, support, rcond))
 
     elif resolved_method == 'exhaustive':
         for r in range(1, max_k + 1):
             for combo in itertools.combinations(range(n), r):
                 candidates.append(
-                    _build_candidate(circuit, Z_mn, delta_v_ms, combo, rcond)
+                    _build_candidate(circuit, blocks, combo, rcond)
                 )
     else:
         raise ValueError(f"Unknown method {method}")

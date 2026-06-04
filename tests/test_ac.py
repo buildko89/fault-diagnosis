@@ -8,6 +8,7 @@ import pytest
 from analog_fault.schema import CircuitConfig, Element
 from analog_fault.circuit import AnalogCircuit, element_admittance
 from analog_fault.simulate import calculate_measurements, calculate_delta_v
+from analog_fault.diagnose import diagnose_node_faults
 
 
 # --------------------------------------------------------------------------
@@ -141,3 +142,67 @@ def test_calculate_delta_v_wrapper_matches_single_block():
     assert block.omega is None
     for a, b in zip(dv, block.delta_v_ms):
         assert np.allclose(a, b)
+
+
+# --------------------------------------------------------------------------
+# diagnose: 複素・多周波数の故障診断（MeasurementBlock のリストを受理）
+# --------------------------------------------------------------------------
+def _ac_bridge_with_cap():
+    # Bridge topology with one capacitor branch (C4 between node1 and node4).
+    cfg = CircuitConfig(
+        name="ac_bridge",
+        reference=0,
+        nodes=[0, 1, 2, 3, 4],
+        accessible=[1, 2, 3],
+        elements=[
+            Element("R1", "R", 1, 0, 1.0),
+            Element("R2", "R", 2, 0, 1.0),
+            Element("R3", "R", 3, 0, 1.0),
+            Element("C4", "C", 1, 4, 1.0e-3),
+            Element("R5", "R", 2, 4, 1.0),
+            Element("R6", "R", 3, 4, 1.0),
+        ],
+        frequencies=[1000.0, 5000.0],
+    )
+    return AnalogCircuit(cfg)
+
+
+def _unit_excitations(circuit):
+    return [np.eye(circuit.num_free_nodes)[idx]
+            for idx in circuit.get_accessible_indices()]
+
+
+def test_ac_diagnosis_single_frequency_recovers_fault():
+    circuit = _ac_bridge_with_cap()
+    exc = _unit_excitations(circuit)
+    blocks = calculate_measurements(
+        circuit, exc, faulty_elements={"C4": 0.5e-3}, frequencies=[1000.0]
+    )
+    # Pass blocks list as the data argument; delta_v_ms is ignored.
+    result = diagnose_node_faults(circuit, blocks, None, max_faults=2)  # auto -> exhaustive
+    assert sorted(result["best"]["support"]) == [1, 4]
+    assert result["best"]["relative_residual"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_ac_diagnosis_multi_frequency_recovers_fault():
+    circuit = _ac_bridge_with_cap()
+    exc = _unit_excitations(circuit)
+    blocks = calculate_measurements(
+        circuit, exc, faulty_elements={"C4": 0.5e-3}, frequencies=[1000.0, 5000.0]
+    )
+    assert len(blocks) == 2
+    result = diagnose_node_faults(circuit, blocks, None, max_faults=2)
+    assert sorted(result["best"]["support"]) == [1, 4]
+    assert result["best"]["relative_residual"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_diagnose_blocks_api_runs_with_omp():
+    # The blocks API must also work via the explicit OMP path (returns a support).
+    circuit = _ac_bridge_with_cap()
+    exc = _unit_excitations(circuit)
+    blocks = calculate_measurements(
+        circuit, exc, faulty_elements={"C4": 0.5e-3}, frequencies=[1000.0, 5000.0]
+    )
+    result = diagnose_node_faults(circuit, blocks, None, max_faults=2, method="omp")
+    assert result["best"] is not None
+    assert 1 <= len(result["best"]["support"]) <= 2
