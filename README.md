@@ -39,7 +39,7 @@ Huang-Lin-Liu (1983) および Togawa-Matsumoto (1984) の理論に基づき、�
 # 依存パッケージのみ
 pip install -r requirements.txt
 
-# もしくはパッケージとして（CLI コマンド analog-fault を含む / 開発用依存込み）
+# もしくはパッケージとして（CLI コマンド fault を含む / 開発用依存込み）
 pip install -e ".[dev]"
 ```
 
@@ -49,7 +49,7 @@ pip install -e ".[dev]"
 
 ```
 .
-├── analog_fault/        # 本体パッケージ
+├── fault/        # 本体パッケージ
 │   ├── schema.py        # 回路定義 (dataclass) と YAML ロード・バリデーション
 │   ├── circuit.py       # 疎行列によるアドミタンス行列 (A, Yb, Y) 構築
 │   ├── testability.py   # k-node テスタビリティ判定 (最大流 / 頂点独立パス)
@@ -69,7 +69,7 @@ pip install -e ".[dev]"
 
 ## 🏗 アーキテクチャと実装内容
 
-本パッケージ（`analog_fault`）は、以下の主要モジュールから構成されています。
+本パッケージ（`fault`）は、以下の主要モジュールから構成されています。
 
 | モジュール名 | 主な役割 | 実装技術・ハイライト |
 |:---|:---|:---|
@@ -107,10 +107,10 @@ python prototype.py
 
 ```python
 import numpy as np
-from analog_fault.schema import CircuitConfig, Element
-from analog_fault.circuit import AnalogCircuit
-from analog_fault.simulate import calculate_delta_v
-from analog_fault.diagnose import diagnose_node_faults
+from fault.schema import CircuitConfig, Element
+from fault.circuit import Circuit
+from fault.simulate import calculate_delta_v
+from fault.diagnose import diagnose_node_faults
 
 # 1. 回路の定義
 config = CircuitConfig(
@@ -124,7 +124,7 @@ config = CircuitConfig(
         Element("R3", "R", 2, 3, 1.0),
     ]
 )
-circuit = AnalogCircuit(config)
+circuit = Circuit(config)
 
 # 2. 観測データの取得 (シミュレーション)
 excitations = [np.array([1.0, 0.0, 0.0])]
@@ -140,8 +140,8 @@ print("故障ノード:", result['best']['support'])
 容量(C)・インダクタンス(L)を含む回路では、`frequencies`（Hz）を指定し `calculate_measurements` で周波数ごとの観測ブロックを得ます。`diagnose_node_faults` はブロックのリストをそのまま受け取れます。
 
 ```python
-from analog_fault.simulate import calculate_measurements
-from analog_fault.diagnose import diagnose_node_faults, reconstruct_branch_faults
+from fault.simulate import calculate_measurements
+from fault.diagnose import diagnose_node_faults, reconstruct_branch_faults
 
 # C/L を含む回路（frequencies は Hz、内部で ω=2πf に変換）
 config = CircuitConfig(
@@ -152,7 +152,7 @@ config = CircuitConfig(
         Element("C1", "C", 1, 2, 1.0e-3),   # value = 容量[F]
     ],
 )
-circuit = AnalogCircuit(config)
+circuit = Circuit(config)
 excitations = [np.array([1.0, 0.0]), np.array([0.0, 1.0])]
 
 # 周波数ごとの観測ブロックを取得し、そのまま診断
@@ -170,19 +170,19 @@ branch = reconstruct_branch_faults(circuit, sorted(result['best']['support']),
 
 ```bash
 # テスタビリティ判定
-analog-fault testability examples/bridge.yaml --k 2
+fault testability examples/bridge.yaml --k 2
 
 # DC 診断
-analog-fault diagnose examples/bridge.yaml --fault R4=0.1 --k 2
+fault diagnose examples/bridge.yaml --fault R4=0.1 --k 2
 
 # AC 診断（--freq か、YAML の frequencies を使用）
-analog-fault diagnose examples/rc_bridge.yaml --fault C4=0.5e-3 --k 2 --freq 1000,5000
+fault diagnose examples/rc_bridge.yaml --fault C4=0.5e-3 --k 2 --freq 1000,5000
 
 # モンテカルロ評価
-analog-fault evaluate examples/rc_bridge.yaml --fault C4=0.5e-3 --k 2 --trials 100
+fault evaluate examples/rc_bridge.yaml --fault C4=0.5e-3 --k 2 --trials 100
 ```
 
-*(`pip install -e .` していない場合は `python -m analog_fault.cli ...` でも実行できます)*
+*(`pip install -e .` していない場合は `python -m fault.cli ...` でも実行できます)*
 
 ---
 

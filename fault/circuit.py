@@ -28,7 +28,7 @@ def element_admittance(el_type: str, value: float, omega: Optional[float]):
     raise ValueError(f"Unsupported element type '{el_type}'.")
 
 
-class AnalogCircuit:
+class Circuit:
     def __init__(self, config: CircuitConfig):
         self.config = config
         self.num_nodes = len(config.nodes)

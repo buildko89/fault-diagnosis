@@ -2,9 +2,9 @@ import numpy as np
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import maximum_flow
 from typing import List, Tuple, Dict
-from .circuit import AnalogCircuit
+from .circuit import Circuit
 
-def check_k_node_testability(circuit: AnalogCircuit, k: int) -> Tuple[bool, Dict[int, int]]:
+def check_k_node_testability(circuit: Circuit, k: int) -> Tuple[bool, Dict[int, int]]:
     """
     Checks k-node fault testability.
     Any inaccessible node must have >= k+1 vertex-disjoint paths to accessible nodes (including ground).

@@ -5,12 +5,12 @@ Phase 2: element_admittance と build_matrices(omega=...) の複素行列構築�
 import numpy as np
 import pytest
 
-from analog_fault.schema import CircuitConfig, Element
-from analog_fault.circuit import AnalogCircuit, element_admittance
-from analog_fault.simulate import calculate_measurements, calculate_delta_v
-from analog_fault.diagnose import diagnose_node_faults, reconstruct_branch_faults
-from analog_fault.evaluate import run_evaluation
-from analog_fault.reporter import generate_markdown_report
+from fault.schema import CircuitConfig, Element
+from fault.circuit import Circuit, element_admittance
+from fault.simulate import calculate_measurements, calculate_delta_v
+from fault.diagnose import diagnose_node_faults, reconstruct_branch_faults
+from fault.evaluate import run_evaluation
+from fault.reporter import generate_markdown_report
 
 
 # --------------------------------------------------------------------------
@@ -54,7 +54,7 @@ def _rc_shunt_circuit():
         ],
         frequencies=[1.0],
     )
-    return AnalogCircuit(cfg)
+    return Circuit(cfg)
 
 
 def test_build_matrices_complex_Y_for_rc():
@@ -73,7 +73,7 @@ def test_build_matrices_dc_path_stays_real():
     # R-only circuit with omega=None -> real matrices (backward compatible).
     cfg = CircuitConfig("r", reference=0, nodes=[0, 1], accessible=[1],
                         elements=[Element("R1", "R", 1, 0, 1.0)])
-    circuit = AnalogCircuit(cfg)
+    circuit = Circuit(cfg)
     A, Yb, Y = circuit.build_matrices()  # omega=None
     assert Y.toarray().dtype == np.float64
     assert Y.toarray()[0, 0] == pytest.approx(1.0)
@@ -134,7 +134,7 @@ def test_calculate_delta_v_wrapper_matches_single_block():
                         elements=[Element("R1", "R", 1, 0, 1.0),
                                   Element("R2", "R", 1, 2, 1.0),
                                   Element("R3", "R", 2, 0, 1.0)])
-    circuit = AnalogCircuit(cfg)
+    circuit = Circuit(cfg)
     exc = [np.array([1.0, 0.0]), np.array([0.0, 1.0])]
 
     dv, Z = calculate_delta_v(circuit, exc, faulty_elements={"R2": 0.1})
@@ -166,7 +166,7 @@ def _ac_bridge_with_cap():
         ],
         frequencies=[1000.0, 5000.0],
     )
-    return AnalogCircuit(cfg)
+    return Circuit(cfg)
 
 
 def _unit_excitations(circuit):

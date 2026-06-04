@@ -1,21 +1,21 @@
 """
-analog_fault の補助モジュール（schema 検証 / YAML ロード / testability の偽判定 /
+fault の補助モジュール（schema 検証 / YAML ロード / testability の偽判定 /
 evaluate / Ridge による枝再構築）に対する回帰テスト。
 """
 import numpy as np
 import pytest
 
-from analog_fault.schema import (
+from fault.schema import (
     CircuitConfig,
     Element,
     load_circuit_yaml,
     validate_config,
 )
-from analog_fault.circuit import AnalogCircuit
-from analog_fault.testability import check_k_node_testability
-from analog_fault.simulate import calculate_delta_v
-from analog_fault.diagnose import diagnose_node_faults, reconstruct_branch_faults
-from analog_fault.evaluate import run_evaluation
+from fault.circuit import Circuit
+from fault.testability import check_k_node_testability
+from fault.simulate import calculate_delta_v
+from fault.diagnose import diagnose_node_faults, reconstruct_branch_faults
+from fault.evaluate import run_evaluation
 
 
 def _bridge_config():
@@ -175,7 +175,7 @@ def test_testability_false_when_paths_insufficient():
                         elements=[Element("R1", "R", 1, 0, 1.0),
                                   Element("R2", "R", 1, 2, 1.0),
                                   Element("R3", "R", 2, 3, 1.0)])
-    circuit = AnalogCircuit(cfg)
+    circuit = Circuit(cfg)
 
     testable, conns = check_k_node_testability(circuit, k=1)
     assert testable is False
@@ -187,7 +187,7 @@ def test_testability_false_when_paths_insufficient():
 # evaluate: 故障なし誤差・精度集計（auto 既定で厳密）
 # --------------------------------------------------------------------------
 def test_run_evaluation_recovers_single_accessible_fault():
-    circuit = AnalogCircuit(_bridge_config())
+    circuit = Circuit(_bridge_config())
     # R1 (ノード1, アクセス可能) の単一故障 -> auto(=exhaustive) で必ず特定できる。
     result = run_evaluation(circuit, {"R1": 0.1}, max_faults=1,
                             trials=5, tol_percent=0.0, noise_std=0.0, seed=1)
@@ -198,7 +198,7 @@ def test_run_evaluation_recovers_single_accessible_fault():
 
 
 def test_run_evaluation_warns_when_faults_exceed_capacity():
-    circuit = AnalogCircuit(_bridge_config())
+    circuit = Circuit(_bridge_config())
     # 実故障ノード {1,2} に対し max_faults=1 は不足 -> 警告が出る。
     with pytest.warns(UserWarning, match="exceeds max_faults"):
         run_evaluation(circuit, {"R1": 0.1, "R2": 0.1}, max_faults=1,
@@ -209,7 +209,7 @@ def test_run_evaluation_warns_when_faults_exceed_capacity():
 # diagnose: Ridge による枝アドミタンス再構築
 # --------------------------------------------------------------------------
 def test_reconstruct_branch_faults_ridge_identifies_faulty_branch():
-    circuit = AnalogCircuit(_bridge_config())
+    circuit = Circuit(_bridge_config())
     excitations = [
         np.array([1.0, 0.0, 0.0, 0.0]),
         np.array([0.0, 1.0, 0.0, 0.0]),

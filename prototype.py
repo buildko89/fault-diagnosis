@@ -1,15 +1,15 @@
 import numpy as np
-from analog_fault.schema import CircuitConfig, Element
-from analog_fault.circuit import AnalogCircuit
-from analog_fault.testability import check_k_node_testability
-from analog_fault.simulate import calculate_delta_v
-from analog_fault.diagnose import diagnose_node_faults, reconstruct_branch_faults
+from fault.schema import CircuitConfig, Element
+from fault.circuit import Circuit
+from fault.testability import check_k_node_testability
+from fault.simulate import calculate_delta_v
+from fault.diagnose import diagnose_node_faults, reconstruct_branch_faults
 import time
-from analog_fault.reporter import generate_markdown_report
+from fault.reporter import generate_markdown_report
 
 if __name__ == "__main__":
     print("==============================================================")
-    print("Analog Fault Diagnosis Prototype Demonstration")
+    print("Fault Diagnosis Prototype Demonstration")
     print("Based on Huang-Lin-Liu (1983) and Togawa-Matsumoto (1984)")
     print("==============================================================")
     
@@ -34,7 +34,7 @@ if __name__ == "__main__":
             Element("R8", "R", 3, 0, 1.0),
         ]
     )
-    circuit1 = AnalogCircuit(config1)
+    circuit1 = Circuit(config1)
     
     print("\n--- 1. Topological Analysis ---")
     print(f"Accessible nodes (excluding ground): {config1.accessible}")
@@ -108,7 +108,7 @@ if __name__ == "__main__":
             Element("R6", "R", 3, 4, 1.0),
         ]
     )
-    circuit2 = AnalogCircuit(config2)
+    circuit2 = Circuit(config2)
     
     print("\n--- 1. Topological Analysis ---")
     print(f"Accessible nodes (excluding ground): {config2.accessible}")

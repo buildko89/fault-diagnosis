@@ -1,15 +1,15 @@
 import pytest
 import numpy as np
 
-from analog_fault.schema import CircuitConfig, Element
-from analog_fault.circuit import AnalogCircuit
-from analog_fault.testability import check_k_node_testability
-from analog_fault.simulate import calculate_delta_v
-from analog_fault.diagnose import diagnose_node_faults, reconstruct_branch_faults
+from fault.schema import CircuitConfig, Element
+from fault.circuit import Circuit
+from fault.testability import check_k_node_testability
+from fault.simulate import calculate_delta_v
+from fault.diagnose import diagnose_node_faults, reconstruct_branch_faults
 
 def test_bridge_network_regression():
     """
-    analog_fault パッケージの実装が Bridge Network の完全再構築を
+    fault パッケージの実装が Bridge Network の完全再構築を
     正しく行えることを担保する回帰テスト。
     """
     config = CircuitConfig(
@@ -26,7 +26,7 @@ def test_bridge_network_regression():
             Element("R6", "R", 3, 4, 1.0),
         ]
     )
-    circuit = AnalogCircuit(config)
+    circuit = Circuit(config)
     
     # 1. Topological Analysis
     testable_1, conns_1 = check_k_node_testability(circuit, 1)
@@ -89,7 +89,7 @@ def _bridge_circuit():
             Element("R6", "R", 3, 4, 1.0),
         ]
     )
-    return AnalogCircuit(config)
+    return Circuit(config)
 
 
 def test_auto_method_is_exact_on_small_circuit():
@@ -138,7 +138,7 @@ def test_omp_does_not_overselect_single_node_fault():
 
 def test_ladder_network_regression():
     """
-    analog_fault パッケージの実装が Ladder Network における再構築の限界を
+    fault パッケージの実装が Ladder Network における再構築の限界を
     正しく処理できることを担保する回帰テスト。
     """
     config = CircuitConfig(
@@ -157,7 +157,7 @@ def test_ladder_network_regression():
             Element("R8", "R", 3, 0, 1.0),
         ]
     )
-    circuit = AnalogCircuit(config)
+    circuit = Circuit(config)
     
     # 1. Topological Analysis
     testable_1, conns_1 = check_k_node_testability(circuit, 1)

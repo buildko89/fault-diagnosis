@@ -3,14 +3,14 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "analog-fault-diagnosis"
+name = "fault-diagnosis"
 version = "0.1.0"
-description = "Analog circuit hardware-fault detection/diagnosis tool (PoC) based on k-node testability and sparse modeling."
+description = "Circuit hardware-fault detection/diagnosis tool (PoC) based on k-node testability and sparse modeling."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Shonan Institute of Technology - Hardware PoC" }]
-keywords = ["analog", "fault-diagnosis", "testability", "sparse-modeling", "circuit"]
+keywords = ["fault-diagnosis", "testability", "sparse-modeling", "circuit"]
 
 dependencies = [
     "numpy>=1.24",
@@ -25,10 +25,10 @@ dependencies = [
 dev = ["pytest>=7.0"]
 
 [project.scripts]
-analog-fault = "analog_fault.cli:main"
+fault = "fault.cli:main"
 
 [tool.setuptools]
-packages = ["analog_fault"]
+packages = ["fault"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
