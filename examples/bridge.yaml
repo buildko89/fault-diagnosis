@@ -1,0 +1,11 @@
+name: bridge
+reference: 0
+nodes: [0, 1, 2, 3, 4]
+accessible: [1, 2, 3]
+elements:
+  - {name: R1, type: R, n1: 1, n2: 0, value: 1.0}
+  - {name: R2, type: R, n1: 2, n2: 0, value: 1.0}
+  - {name: R3, type: R, n1: 3, n2: 0, value: 1.0}
+  - {name: R4, type: R, n1: 1, n2: 4, value: 1.0}
+  - {name: R5, type: R, n1: 2, n2: 4, value: 1.0}
+  - {name: R6, type: R, n1: 3, n2: 4, value: 1.0}
