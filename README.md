@@ -222,10 +222,29 @@ pytest tests/
 * **OMP は近似解法**です。対称性の高い回路や内部（非アクセス）ノードの故障では取りこぼす場合があるため、小〜中規模では既定の `auto`（自動で全探索）を使用してください。詳細は上記「故障診断アルゴリズムの比較」を参照。
 * 診断段の転送インピーダンス行列 `Z_mn` は密行列として保持されるため、超大規模回路ではメモリ・計算量に注意が必要です。
 
-詳しい解析と改善履歴は [`Docs/Report20260604/改善レポート.md`](Docs/Report20260604/改善レポート.md) を参照してください。
+---
+
+## 📚 参考文献 (References)
+
+本ツールが依拠する理論は、以下の論文に基づきます（理論・概念の参照であり、図表・数式・コードの転載は行っていません）。
+
+1. Z. F. Huang, C.-S. Lin, R.-W. Liu, "Node-Fault Diagnosis and a Design of Testability," *IEEE Transactions on Circuits and Systems*, vol. CAS-30, no. 5, pp. 257–265, May 1983.
+2. Y. Togawa, T. Matsumoto, "On the Topological Testability Conjecture for Analog Fault Diagnosis Problems," *IEEE Transactions on Circuits and Systems*, vol. CAS-31, pp. 147–158, 1984.
+
+---
+
+## 🧩 サードパーティ・ライブラリ (Third-Party Libraries)
+
+本プロジェクトは、それぞれのライセンス（いずれも BSD / MIT / PSF 系の寛容なライセンス）の下で配布される以下のオープンソースライブラリに依存しています。これらのライブラリのコードは本リポジトリに同梱しておらず、`pip` 経由で各自インストールされます。
+
+NumPy, SciPy, scikit-learn, matplotlib, NetworkX, PyYAML（および開発用に pytest）
+
+各ライブラリは原著作者・各プロジェクトに著作権が帰属します。詳細は各プロジェクトのライセンスを参照してください。
 
 ---
 
 ## 📄 ライセンス (License)
 
 本リポジトリは [MIT License](LICENSE) の下で公開されています。
+
+本ソフトウェアは「現状のまま (AS IS)」提供され、明示・黙示を問わずいかなる保証も伴いません。利用に伴う一切のリスクは利用者が負うものとします（詳細は [LICENSE](LICENSE) を参照）。
