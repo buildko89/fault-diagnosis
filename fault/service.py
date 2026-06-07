@@ -150,6 +150,9 @@ def run_diagnose(
         circuit, blocks, None, k, top_n=top_n, method=method
     )
     result["frequencies"] = list(frequencies) if frequencies else None
+    # Voltage deviation at accessible nodes under the first excitation, kept for
+    # visualization (the GUI plots it). ndarray, complex for AC. Not used by CLI.
+    result["delta_v_m"] = np.asarray(blocks[0].delta_v_ms[0])
 
     if reconstruct and result.get("best") and result["best"]["support"]:
         support = sorted(result["best"]["support"])

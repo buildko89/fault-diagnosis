@@ -23,12 +23,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+gui = ["streamlit>=1.49"]
 
 [project.scripts]
 fault = "fault.cli:main"
+fault-gui = "fault_gui.launch:main"
 
 [tool.setuptools]
-packages = ["fault"]
+packages = ["fault", "fault_gui", "fault_gui.views"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
