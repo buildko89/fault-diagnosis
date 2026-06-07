@@ -29,10 +29,13 @@ class CircuitConfig:
     # frequency. Internally converted to angular frequency omega = 2*pi*f.
     frequencies: List[float] = field(default_factory=list)
 
-def load_circuit_yaml(file_path: str) -> CircuitConfig:
-    with open(file_path, 'r', encoding='utf-8') as f:
-        data = yaml.safe_load(f)
+def circuit_config_from_dict(data: dict) -> CircuitConfig:
+    """Build and validate a CircuitConfig from an already-parsed mapping.
 
+    Shared by ``load_circuit_yaml`` (file path) and ``load_circuit_yaml_text``
+    (in-memory YAML, e.g. a GUI upload) so the parsing/validation logic lives in
+    one place.
+    """
     elements = [Element(**el) for el in data.get('elements', [])]
 
     config = CircuitConfig(
@@ -46,6 +49,20 @@ def load_circuit_yaml(file_path: str) -> CircuitConfig:
 
     validate_config(config)
     return config
+
+
+def load_circuit_yaml(file_path: str) -> CircuitConfig:
+    with open(file_path, 'r', encoding='utf-8') as f:
+        data = yaml.safe_load(f)
+    return circuit_config_from_dict(data)
+
+
+def load_circuit_yaml_text(text: str) -> CircuitConfig:
+    """Load a CircuitConfig from a YAML string (e.g. a GUI file upload)."""
+    data = yaml.safe_load(text)
+    if not isinstance(data, dict):
+        raise ValueError("YAML content must be a mapping of circuit fields.")
+    return circuit_config_from_dict(data)
 
 def validate_config(config: CircuitConfig):
     if config.reference not in config.nodes:
