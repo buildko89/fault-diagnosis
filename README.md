@@ -30,6 +30,7 @@ Huang-Lin-Liu (1983) および Togawa-Matsumoto (1984) の理論に基づき、�
 * Python 3.9+
 * `numpy`, `scipy`, `scikit-learn`, `matplotlib`, `networkx`, `pyyaml`
 * `pytest` (テスト実行用)
+* `streamlit` (GUI/Web UI を使う場合のみ)
 
 ### インストール
 
@@ -41,6 +42,9 @@ pip install -r requirements.txt
 
 # もしくはパッケージとして（CLI コマンド fault を含む / 開発用依存込み）
 pip install -e ".[dev]"
+
+# GUI（Web UI）も使う場合（Streamlit を追加）
+pip install -e ".[gui]"
 ```
 
 ---
@@ -56,8 +60,10 @@ pip install -e ".[dev]"
 │   ├── simulate.py      # 周波数ごとの ΔV と転送インピーダンス Z_mn (MeasurementBlock)
 │   ├── diagnose.py      # 故障ノード診断 (auto / exhaustive / S-OMP) と枝再構築・R/C/L 分類
 │   ├── evaluate.py      # モンテカルロ精度評価 (公差・ノイズ・複数周波数)
-│   ├── reporter.py      # Markdown レポート + トポロジー/ΔV 図の生成
+│   ├── reporter.py      # Markdown レポート + トポロジー/ΔV 図の生成（図ビルダは GUI と共用）
+│   ├── service.py       # フレームワーク非依存サービス層 (CLI/GUI 共通の load/testability/diagnose/evaluate)
 │   └── cli.py           # CLI (testability / diagnose / evaluate)
+├── fault_gui/           # Streamlit 製 Web UI (app + Circuit/Testability/Diagnose/Evaluate タブ)
 ├── examples/            # サンプル回路 (bridge.yaml, ladder.yaml, rc_bridge.yaml)
 ├── tests/               # pytest 回帰テスト
 ├── prototype.py         # デモスクリプト
@@ -184,6 +190,36 @@ fault evaluate examples/rc_bridge.yaml --fault C4=0.5e-3 --k 2 --trials 100
 
 *(`pip install -e .` していない場合は `python -m fault.cli ...` でも実行できます)*
 
+### 5. GUI（Web UI）からの実行
+
+CLI と同じ機能（テスタビリティ判定 / 故障診断 / モンテカルロ評価）を、回路の読込から結果・図の表示まで
+ブラウザ上の 1 画面で実行できる **Streamlit 製 Web UI** を同梱しています。コア計算ロジックは CLI と共通の
+サービス層（`fault/service.py`）を経由しており、CLI と同じ結果が得られます。
+
+```bash
+# 事前に GUI 依存を導入（Streamlit）
+pip install -e ".[gui]"
+
+# 起動（いずれでも可）
+fault-gui
+# もしくは
+streamlit run fault_gui/app.py
+# もしくは
+python -m fault_gui
+```
+
+起動するとブラウザが開きます。サイドバーで回路を読み込み（`examples/` から選択 / YAML アップロード /
+パス入力）、共通パラメータ（k・周波数）を設定したうえで、4 つのタブを操作します。
+
+| タブ | 内容 |
+|:---|:---|
+| **Circuit** | トポロジー図・回路サマリ・素子一覧 |
+| **Testability** | k-node テスタビリティ判定（Testable バッジ＋内部ノード接続度） |
+| **Diagnose** | 故障素子を表で指定 → 診断結果（status / 候補一覧 / トポロジー図 / ΔV 図）と、任意で R/C/L 種別の枝再構築 |
+| **Evaluate** | モンテカルロ評価（Top-1/Top-3 精度ほか）。公差・ノイズを掃引した精度曲線プロットにも対応 |
+
+> 故障素子はプルダウンから選ぶため、素子名のタイプミスが起きません。入力エラーは画面上に表示され、アプリは停止しません。
+
 ---
 
 ## 📊 レポート自動生成機能
@@ -235,9 +271,9 @@ pytest tests/
 
 ## 🧩 サードパーティ・ライブラリ (Third-Party Libraries)
 
-本プロジェクトは、それぞれのライセンス（いずれも BSD / MIT / PSF 系の寛容なライセンス）の下で配布される以下のオープンソースライブラリに依存しています。これらのライブラリのコードは本リポジトリに同梱しておらず、`pip` 経由で各自インストールされます。
+本プロジェクトは、それぞれのライセンス（いずれも BSD / MIT / PSF / Apache-2.0 系の寛容なライセンス）の下で配布される以下のオープンソースライブラリに依存しています。これらのライブラリのコードは本リポジトリに同梱しておらず、`pip` 経由で各自インストールされます。
 
-NumPy, SciPy, scikit-learn, matplotlib, NetworkX, PyYAML（および開発用に pytest）
+NumPy, SciPy, scikit-learn, matplotlib, NetworkX, PyYAML（GUI 利用時のみ Streamlit〈Apache-2.0〉、開発用に pytest）
 
 各ライブラリは原著作者・各プロジェクトに著作権が帰属します。詳細は各プロジェクトのライセンスを参照してください。
 

@@ -1,7 +1,7 @@
 """Diagnose tab: simulate a fault and locate it, with figures."""
 import streamlit as st
 
-from fault import service
+from .. import cached
 from ..plots import topology_figure, delta_v_figure
 from ..widgets import fault_input
 
@@ -23,7 +23,7 @@ def _fmt(x, spec="%.6e"):
         return str(x)
 
 
-def render_diagnose(circuit, k: int, frequencies):
+def render_diagnose(circuit, circuit_key: str, k: int, frequencies):
     st.subheader("故障診断")
     st.caption(f"共通パラメータ k = {k} / frequencies = {frequencies or 'DC'}（サイドバーで変更）")
 
@@ -42,10 +42,11 @@ def render_diagnose(circuit, k: int, frequencies):
         return
 
     try:
-        result = service.run_diagnose(
-            circuit, faults, k, top_n=int(top_n), method=method,
-            frequencies=frequencies, reconstruct=reconstruct,
-        )
+        with st.spinner("診断中..."):
+            result = cached.diagnose(
+                circuit_key, tuple(sorted(faults.items())), k, int(top_n), method,
+                tuple(frequencies) if frequencies else None, reconstruct,
+            )
     except Exception as e:  # noqa: BLE001 - surface any failure in the UI
         st.error(f"エラー: {e}")
         return

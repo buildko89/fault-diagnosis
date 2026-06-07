@@ -30,8 +30,17 @@ def _list_examples():
     return sorted(f for f in os.listdir(EXAMPLES_DIR) if f.endswith(".yaml"))
 
 
+def _read(path):
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
 def _load_from_sidebar():
-    """Render the circuit-source controls and return a Circuit or None."""
+    """Render the circuit-source controls.
+
+    Returns ``(circuit, yaml_text)`` or ``(None, None)``. The YAML text is the
+    cache key used by ``fault_gui.cached`` so results are reused across reruns.
+    """
     st.sidebar.header("回路ソース")
     mode = st.sidebar.radio(
         "読込方法", ["examples から選択", "YAML アップロード", "パス入力"],
@@ -43,30 +52,31 @@ def _load_from_sidebar():
             examples = _list_examples()
             if not examples:
                 st.sidebar.warning("examples/ に YAML が見つかりません。")
-                return None
+                return None, None
             name = st.sidebar.selectbox("ファイル", examples, key="src_example")
-            return service.load_circuit(os.path.join(EXAMPLES_DIR, name))
-
-        if mode == "YAML アップロード":
+            text = _read(os.path.join(EXAMPLES_DIR, name))
+        elif mode == "YAML アップロード":
             up = st.sidebar.file_uploader("YAML ファイル", type=["yaml", "yml"])
             if up is None:
-                return None
-            return service.load_circuit(up.getvalue().decode("utf-8"), is_text=True)
+                return None, None
+            text = up.getvalue().decode("utf-8")
+        else:
+            path = st.sidebar.text_input("YAML パス", key="src_path")
+            if not path:
+                return None, None
+            text = _read(path)
 
-        path = st.sidebar.text_input("YAML パス", key="src_path")
-        if not path:
-            return None
-        return service.load_circuit(path)
+        return service.load_circuit(text, is_text=True), text
     except Exception as e:  # noqa: BLE001 - surface load/validation errors in UI
         st.sidebar.error(f"読込エラー: {e}")
-        return None
+        return None, None
 
 
 def render():
     st.set_page_config(page_title="Fault Diagnosis GUI", layout="wide")
     st.title("Circuit Fault Diagnosis — GUI")
 
-    circuit = _load_from_sidebar()
+    circuit, circuit_key = _load_from_sidebar()
 
     st.sidebar.header("共通パラメータ")
     k = st.sidebar.number_input("k (最大故障数)", min_value=1, max_value=20, value=2, step=1)
@@ -91,11 +101,11 @@ def render():
     with tab_c:
         render_circuit(circuit)
     with tab_t:
-        render_testability(circuit, int(k))
+        render_testability(circuit_key, int(k))
     with tab_d:
-        render_diagnose(circuit, int(k), frequencies)
+        render_diagnose(circuit, circuit_key, int(k), frequencies)
     with tab_e:
-        render_evaluate(circuit, int(k), frequencies)
+        render_evaluate(circuit, circuit_key, int(k), frequencies)
 
 
 # Streamlit executes this script as "__main__"; importing the module (e.g. in

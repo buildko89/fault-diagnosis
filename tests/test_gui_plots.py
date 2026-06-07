@@ -8,7 +8,7 @@ from matplotlib.figure import Figure
 
 from fault.schema import CircuitConfig, Element
 from fault.circuit import Circuit
-from fault_gui.plots import topology_figure, delta_v_figure
+from fault_gui.plots import topology_figure, delta_v_figure, accuracy_sweep_figure
 
 
 def _bridge():
@@ -38,3 +38,10 @@ def test_delta_v_figure_ac_has_two_panels():
     fig = delta_v_figure(_bridge(), dv)
     assert isinstance(fig, Figure)
     assert len(fig.axes) == 2  # magnitude + phase
+
+
+def test_accuracy_sweep_figure():
+    fig = accuracy_sweep_figure([0.0, 1.0, 2.0], [100.0, 80.0, 60.0],
+                                xlabel="tolerance [%]")
+    assert isinstance(fig, Figure)
+    assert len(fig.axes) == 1

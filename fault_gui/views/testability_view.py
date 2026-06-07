@@ -1,16 +1,16 @@
 """Testability tab: k-node testability check."""
 import streamlit as st
 
-from fault import service
+from .. import cached
 
 
-def render_testability(circuit, k: int):
+def render_testability(circuit_key: str, k: int):
     st.subheader("k-node テスタビリティ判定")
     st.caption(f"共通パラメータ k = {k}（サイドバーで変更）")
 
     if st.button("判定を実行", key="run_testability"):
         try:
-            res = service.run_testability(circuit, k)
+            res = cached.testability(circuit_key, k)
         except Exception as e:  # noqa: BLE001 - surface any failure in the UI
             st.error(f"エラー: {e}")
             return
